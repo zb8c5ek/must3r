@@ -1,6 +1,6 @@
 cython
 pyaml
-xformers
+# xformers => no suitable version for cuda 12.2
 scikit-learn
 open3d
 viser
