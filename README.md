@@ -41,7 +41,7 @@ Official implementation of `MUSt3R: Multi-view Network for Stereo 3D Reconstruct
 
 ## License
 MUSt3R is released under the MUSt3R Non-Commercial License. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for more information.  
-A separate notice is available for the checkpoints. Make sure to check [CHECKPOINTS_NOTICE](CHECKPOINTS_NOTICE). The mapfree dataset in particular, which was used to train all models, has a very restrictive license.
+[NOTICE](NOTICE) also contains information about the datasets used to train the checkpoints. The mapfree dataset in particular, which was used to train all models, has a very restrictive license.
 
 ## Get Started
 
@@ -49,10 +49,28 @@ MUSt3R extends the DUSt3R architecture through several modifications: making it 
 
 ### Installation
 
+#### using setup.py
 ```bash
 micromamba create -n must3r python=3.11 cmake=3.14.0
 micromamba activate must3r 
 pip3 install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126 # use the correct version of cuda for your system
+
+# (recommended) if you can, install xFormers for memory-efficient attention
+pip3 install -U xformers==0.0.30 --index-url https://download.pytorch.org/whl/cu126
+pip3 install must3r@git+https://github.com/naver/must3r.git
+# pip3 install must3r[optional]@git+https://github.com/naver/must3r.git # adds pillow-heif
+# pip3 install --no-build-isolation must3r[curope]@git+https://github.com/naver/must3r.git # adds curope
+# pip3 install --no-build-isolation must3r[all]@git+https://github.com/naver/must3r.git # adds all optional dependencies
+```
+
+#### development (no installation)
+
+```bash
+micromamba create -n must3r python=3.11 cmake=3.14.0
+micromamba activate must3r 
+pip3 install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126 # use the correct version of cuda for your system
+
+# (recommended) if you can, install xFormers for memory-efficient attention
 pip3 install -U xformers==0.0.30 --index-url https://download.pytorch.org/whl/cu126
 
 git clone --recursive https://github.com/naver/must3r.git
@@ -65,7 +83,7 @@ pip install -r dust3r/requirements_optional.txt
 pip install -r requirements.txt
 
 # install asmk
-pip install faiss-cpu  # or the offically supported way (not tested): micromamba install -c pytorch faiss-cpu=1.11.0  # faiss-gpu=1.11.0 
+pip install faiss-cpu  # or the officially supported way (not tested): micromamba install -c pytorch faiss-cpu=1.11.0  # faiss-gpu=1.11.0 
 mkdir build
 cd build
 git clone https://github.com/jenicek/asmk.git
@@ -82,7 +100,7 @@ cd ../../../../
 ```
 
 ### Checkpoints
-We provide several pre-trained models. For these checkpoints, make sure to agree to the license of all the training datasets we used, in addition to [MUSt3R License](LICENSE). For more information, check [CHECKPOINTS_NOTICE](CHECKPOINTS_NOTICE).
+We provide several pre-trained models. For these checkpoints, make sure to agree to the license of all the training datasets we used, in addition to [MUSt3R License](LICENSE). For more information, check [NOTICE](NOTICE).
 
 | Modelname   | Training resolutions | Head | Encoder | Decoder |
 |-------------|----------------------|------|---------|---------|
@@ -119,51 +137,68 @@ f7c133906bcfd4fe6ee157a9ffa85a23  MUSt3R_512_retrieval_trainingfree.pth
 
 By default, `demo.py` will open a gradio instance on localhost:7860. If you launch the demo with `--viser`, it will also lauch a viser instance on localhost:8080. Load the images with gradio, hit run and visualize the reconstruction as it's being made in the viser tab.
 
+> [!NOTE]
+> `demo.py` is installed as `must3r_demo` (or `must3r_demo.exe`) when must3r is installed to `site-packages`. 
+
 ```bash
-python demo.py --weights /path/to/MUSt3R_512.pth --retrieval /path/to/MUSt3R_512_retrieval_trainingfree.pth --image_size 512 --viser
+python demo.py --weights /path/to/MUSt3R_512.pth --retrieval /path/to/MUSt3R_512_retrieval_trainingfree.pth --image_size 512 --viser --embed_viser
 
 # use --amp bf16 if your gpu supports
 # Use --local_network to make it accessible on the local network, or --server_name to specify the url manually
 # Use --server_port to change the port, by default it will search for an available port starting at 7860
 # Use --device to use a different device, by default it's "cuda"
-# --viser is used to launch the viser server at the same time as gradio (for real-time updates). You'll need to open a new tab to see this. Note: only instance is launched so it doesn't support multiple instances. It'll launch on port 8080 if available.
 # --allow_local_files adds a second tab to load images from a local directory
+# --viser is used to launch the viser server at the same time as gradio (for real-time updates). 
+# Two options:
+# 1) use --embed_viser to replace the gradio "Model3D" component with the embedded viser page (recommended) 
+# 2) Open a new tab and access the viser url, typically http://localhost:8080/.
+# Note: only one instance of viser is launched so all clients will see the same reconstructions.
+# Viser's viewer will try to target a fixed framerate and lower the quality when the framerate is low.
+# To disable this behaviour, open viser with http://localhost:8080/?fixedDpr=1 (recommended)
 
 # other examples
 # 512 resolution bf16, allow local files
-python demo.py --weights /path/to/MUSt3R_512.pth --retrieval /path/to/MUSt3R_512_retrieval_trainingfree.pth --image_size 512 --amp bf16 --viser --allow_local_files
+python demo.py --weights /path/to/MUSt3R_512.pth --retrieval /path/to/MUSt3R_512_retrieval_trainingfree.pth --image_size 512 --amp bf16 --viser --embed_viser --allow_local_files
 
 # 224 resolution, fp16, allow local files
-python3 demo.py --weights /path/to/MUSt3R_224_cvpr.pth --retrieval /path/to/MUSt3R_224_retrieval_trainingfree.pth --image_size 224 --viser --allow_local_files --amp fp16
+python3 demo.py --weights /path/to/MUSt3R_224_cvpr.pth --retrieval /path/to/MUSt3R_224_retrieval_trainingfree.pth --image_size 224 --viser --embed_viser --allow_local_files --amp fp16
 # 768 resolution (will use interpolated positional embeddings)
-python demo.py --weights /path/to/MUSt3R_512.pth --retrieval /path/to/MUSt3R_512_retrieval_trainingfree.pth --image_size 768 --amp bf16 --viser
+python demo.py --weights /path/to/MUSt3R_512.pth --retrieval /path/to/MUSt3R_512_retrieval_trainingfree.pth --image_size 768 --amp bf16 --viser --embed_viser
 ```
 
-select images
+> [!Note]
+>  IMPORTANT: Explanation of the demo parameters
 
-"Number of refinement iterations" increase it to 1 or 2 to do multiple pass on the keyframes (useful for loop closure)  
+1) select images:  
+     - you can upload images using the gradio.File component.
+     - if you use `--allow_local_files`, a second tab will appear: `local_path`. In this tab, you can paste a directory path from your local machine and hit `load` to quickly select all the images inside this directory (not recursive).
 
-IMPORTANT  
-"Maximum batch size" -> If you are using a small gpu or you have a lot of images, put 1 to limit the vram usage.  
+2) select global parameters
+     - "Number of refinement iterations" increase it to 1 or 2 to do multiple pass on the keyframes (useful for loop closure)  
+     - "Maximum batch size" -> If you are using a small gpu or you have a lot of images, put 1 to limit the vram usage (IMPORTANT).  
 
-Modes:
-1 - for a simple video sequence, leave it at "sequence: linspace"  
-2 - for an unordered collection of images, change it to "unordered: retrieval"  
+3) select the inference algorithm:  
+  There are 4 Modes implemented. You'll have to select the mode that is most suited to your data:  
+> [!Note]
+>  If your images are unordered, then you **HAVE TO** select `unordered: retrieval` (only available with the --retrieval option). 
 
-both of these modes share the same parameters:  
+- 3.a. for an unordered collection of images, change it to "unordered: retrieval"  
+     - Select the Number of memory images (also called keyframes). For this one, I would say to put as many as possible but to not go above 300, the more images there are, the slower/more memory hungry it'll be.
+     - Leave "Render once" toggled OFF. You can toggle it ON if "Number of refinement iterations" > 0. 
+- 3.b. for a simple video sequence, you can select "sequence: linspace"
+     - Same parameters as 3.a.
+- 3.c. for a longer video sequence : "sequence: slam keyframes"  (selected by default).
+     - Default parameters should be good enough. You can increase subsample to 4 for slam at higher resolutions (>= 512)
+     - The online version is equivalent to "sequence: slam keyframes" with local_context=0.
+- 3.d. for a longer video sequence, if the KDTree/slam is too slow for you : "sequence: local context and linspace keyframes".
+    - You can also keep default parameters.
 
-Select the Number of memory images (I would say to put as many as possible but to not go above 300, the more images there are, the slower/more memory hungry it'll be)  
-Leave "Render once" toggled OFF. You can toggle it ON if "Number of refinement iterations" > 0  
-
-3 - for a longer video sequence : "sequence: slam keyframes"  
-4 - for a longer video sequence, if the KDTree/slam is too slow for you : "sequence: local context and linspace keyframes"  
-
-Default params should be good enough, may increase subsample for slam at higher resolutions.  
-The online version is equivalent to "sequence: slam keyframes" with local_context=0.  
-
-Hit "Run"  
+4) Hit "Run". Wait for the process the load all images and switch to the viser tab to see the reconstruction, or wait until the full reconstruction appears in gradio.
 
 ### Online Visual Odometry Demo (open3d)
+
+> [!NOTE]
+> `slam.py` is installed as `must3r_slam` (or `must3r_slam.exe`) when must3r is installed to `site-packages`. 
 
 ```bash
 # examples

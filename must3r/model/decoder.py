@@ -155,7 +155,7 @@ class MUSt3R(BaseTransformer):
             x = x.view(B, nimgs, *x.shape[1:])
         return x
 
-    def forward_list(self, x, pos, true_shape, current_mem=None, render=False):
+    def forward_list(self, x, pos, true_shape, current_mem=None, render=False, return_feats=False):
         # forward_list is called at inference when dealing with multiple aspect ratios or limited batch size
         x = x.copy()  # to be able to make views without changing the parent list
         pos = pos.copy()
@@ -255,10 +255,16 @@ class MUSt3R(BaseTransformer):
         # apply prediction head
         for i in range(len(x)):
             x[i] = self._compute_prediction_head(true_shape[i], B, nimgs[i], feats[i])
-        # return memory, pointmaps
-        return out, x
+        if return_feats:
+            # return memory, pointmaps, feats
+            feats = [[feats[i][j].view(B, nimgs[i], *feats[i][j].shape[1:]) for j in range(len(feats[i]))]
+                     for i in range(len(feats))]
+            return out, x, feats
+        else:
+            # return memory, pointmaps
+            return out, x
 
-    def forward(self, x, pos, true_shape, current_mem=None, render=False):
+    def forward(self, x, pos, true_shape, current_mem=None, render=False, return_feats=False):
         if isinstance(x, list):
             # multiple ar in this batch
             return self.forward_list(x, pos, true_shape, current_mem, render)
@@ -334,8 +340,14 @@ class MUSt3R(BaseTransformer):
 
         # apply prediction head
         x = self._compute_prediction_head(true_shape, B, nimgs, feats)
-        # return memory, pointmaps
-        return out, x
+
+        if return_feats:
+            # return memory, pointmaps, feats
+            feats = [feats[i].view(B, nimgs, *feats[i].shape[1:]) for i in range(len(feats))]
+            return out, x, feats
+        else:
+            # return memory, pointmaps
+            return out, x
 
 
 class CausalMUSt3R(MUSt3R):
@@ -420,7 +432,7 @@ class CausalMUSt3R(MUSt3R):
             attn_mask = attn_mask_float
         return attn_mask
 
-    def forward(self, x, pos, true_shape, current_mem=None, render=False):
+    def forward(self, x, pos, true_shape, current_mem=None, render=False, return_feats=False):
         current_dtype = get_current_dtype(x.dtype)
         # project encoder features to the correct dimension
         B, nimgs, N, Denc = x.shape
@@ -440,7 +452,7 @@ class CausalMUSt3R(MUSt3R):
             current_mem, current_mem_labels, mem_nimgs, mem_protected_imgs, mem_protected_tokens = current_mem
             x = x + self.image2_embed.to(current_dtype)  # not the reference image / memory
 
-        # protected tokens will not be droped out
+        # protected tokens will not be dropped out
         if not render:
             current_mem_protected_imgs = mem_protected_imgs
             mem_protected_imgs = min(self.protected_imgs, current_mem_protected_imgs + nimgs)
@@ -455,7 +467,7 @@ class CausalMUSt3R(MUSt3R):
         mem_not_sel = None
         active_mem = current_mem
         if not render and self.mem_dropout.p > 0.0:
-            # random token droput, efficient for training
+            # random token dropout, efficient for training
             mem_sel, mem_not_sel = self.mem_dropout(Nm, nimgs, N, protected=mem_protected_tokens, device=x.device)
         elif render and self.mem_dropout.p > 0.0 and self.dropout_mode == 'temporary':
             new_mem_tokens = 0
@@ -487,12 +499,12 @@ class CausalMUSt3R(MUSt3R):
             # when updating the memory, do not let an image do CA with its own tokens
             # ignore this rule when initializing from only one image
             if self.use_mem_mask:
-                # physically remove the self attenting memory tokens
+                # physically remove the self attending memory tokens
                 mem_mask = self.make_mem_mask(nimgs, N, Nm, x.device)
             # create mask for the cross attention
             attn_mask = self.make_attn_mask(x, B, nimgs, N, mem_nimgs, Nm, mem_not_sel, mem_labels, mem_mask)
 
-        new_mem = []  # output memory tokens before compression
+        new_mem = []
         for blk, current_mem_blk in zip(self.blocks_dec, active_mem):
             if not render:
                 # update the memory for this layer
@@ -531,8 +543,14 @@ class CausalMUSt3R(MUSt3R):
 
         # apply prediction head
         x = self._compute_prediction_head(true_shape, B, nimgs, feats)
-        # return memory, pointmaps
-        return out, x
+
+        if return_feats:
+            # return memory, pointmaps, feats
+            feats = [feats[i].view(B, nimgs, *feats[i].shape[1:]) for i in range(len(feats))]
+            return out, x, feats
+        else:
+            # return memory, pointmaps
+            return out, x
 
 
 if __name__ == '__main__':
@@ -540,7 +558,7 @@ if __name__ == '__main__':
     from must3r.model.encoder import Dust3rEncoder
     import must3r.tools.path_to_dust3r  # noqa
     import dust3r.utils.path_to_croco  # noqa
-    from models.blocks import PositionGetter
+    from croco.models.blocks import PositionGetter
     toggle_memory_efficient_attention(enabled=True)
 
     enc = Dust3rEncoder(img_size=(224, 224), patch_embed='PatchEmbedDust3R').to('cuda')

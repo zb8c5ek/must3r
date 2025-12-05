@@ -6,6 +6,7 @@ import itertools
 from tqdm import tqdm
 import roma
 from collections import deque
+import math
 
 from must3r.model import ActivationType, apply_activation
 import must3r.tools.path_to_dust3r  # noqa
@@ -25,13 +26,14 @@ def postprocess(pointmaps, pointmaps_activation=ActivationType.NORM_EXP, compute
         out['conf'] = 1.0 + pointmaps[..., -1].exp()
 
     if compute_cam:
-        H, W = out['conf'].shape[-2:]
-        pp = torch.tensor((W / 2, H / 2), device=out['pts3d'].device)
-        focal = estimate_focal_knowing_depth(out['pts3d_local'], pp, focal_mode='weiszfeld')
-        out['focal'] = focal
-
         batch_dims = out['pts3d'].shape[:-3]
         num_batch_dims = len(batch_dims)
+        H, W = out['conf'].shape[-2:]
+        pp = torch.tensor((W / 2, H / 2), device=out['pts3d'].device)
+        focal = estimate_focal_knowing_depth(out['pts3d_local'].reshape(math.prod(batch_dims), H, W, 3), pp,
+                                             focal_mode='weiszfeld')
+        out['focal'] = focal.reshape(*batch_dims)
+
         R, T = roma.rigid_points_registration(
             out['pts3d_local'].reshape(*batch_dims, -1, 3),
             out['pts3d'].reshape(*batch_dims, -1, 3),
@@ -60,7 +62,7 @@ def split_list_of_tensors(tensor, max_bs):
 
 
 def stack_views(true_shape, values, max_bs=None):
-    # first figure out what the unique aspect ration are
+    # first figure out what the unique aspect ratios are
     unique_true_shape, inverse_indices = torch.unique(true_shape, dim=0, return_inverse=True)
 
     # we group the values that share the same AR
@@ -165,7 +167,7 @@ def encoder_multi_ar(encoder, imgs, true_shape, verbose=False, max_bs=None, devi
 @torch.no_grad()
 def inference_multi_ar_batch(encoder, decoder, imgs, true_shape, mem=None, verbose=False,
                              encoder_precomputed_features=None,
-                             preserve_gpu_mem=False, post_process_function=None, device=None,
+                             preserve_gpu_mem=False, post_process_function=lambda x: {'pts3d': x}, device=None,
                              render=False, viser_server=None):
     device = device or true_shape.device
     outdevice = device if not preserve_gpu_mem else "cpu"
@@ -228,12 +230,10 @@ def _update_in_mem(old_values, new_values, old_labels, new_labels, old_idx, new_
 @torch.no_grad()
 def inference_video_multi_ar(encoder, decoder, imgs, true_shape, mem_batches,
                              verbose=False, max_bs=None, encoder_precomputed_features=None,
-                             preserve_gpu_mem=False, post_process_function=None, device=None, return_mem=False,
-                             viser_server=None, num_refinements_iterations=0,
-                             local_context_size=25,
+                             preserve_gpu_mem=False, post_process_function=lambda x: {'pts3d': x}, device=None,
+                             return_mem=False, viser_server=None, num_refinements_iterations=0, local_context_size=25,
                              is_keyframe_function=lambda id, res, scene_state: (id % 3 == 0),
-                             scene_state=None,
-                             scene_state_update_function=lambda res, scene_state: scene_state):
+                             scene_state=None, scene_state_update_function=lambda res, scene_state: scene_state):
     true_shape = torch.stack(true_shape, dim=0)
     nimgs = true_shape.shape[0]
     device = device or true_shape.device
@@ -290,7 +290,7 @@ def inference_video_multi_ar(encoder, decoder, imgs, true_shape, mem_batches,
             new_labels = [int(v) for v in new_labels]
             mem = new_mem
             local_keyframes = []
-            if len(img_labels) == 0:  # at initialization, all keyframes (to simplify thing a bit)
+            if len(img_labels) == 0:  # at initialization, all keyframes (to simplify things a bit)
                 for j, img_id_i in enumerate(img_ids_i):
                     img_id_i = int(img_id_i)
                     img_labels[img_id_i] = new_labels[j]
@@ -368,8 +368,8 @@ def inference_video_multi_ar(encoder, decoder, imgs, true_shape, mem_batches,
 @torch.no_grad()
 def inference_multi_ar(encoder, decoder, imgs, img_ids, true_shape, mem_batches,
                        verbose=False, max_bs=None, to_render=None, encoder_precomputed_features=None,
-                       precomputed_mem=None, preserve_gpu_mem=False, post_process_function=None, device=None,
-                       return_mem=False, viser_server=None, num_refinements_iterations=0):
+                       precomputed_mem=None, preserve_gpu_mem=False, post_process_function=lambda x: {'pts3d': x},
+                       device=None, return_mem=False, viser_server=None, num_refinements_iterations=0):
     true_shape = torch.stack(true_shape, dim=0)
     nimgs = true_shape.shape[0]
     device = device or true_shape.device
@@ -567,14 +567,19 @@ def groupby_consecutive(data):
 
 
 def inference_encoder(encoder, imgs, true_shape_view, max_bs=None, requires_grad=False):
-    def encoder_blk(imgs):
+    def encoder_get_context():
+        return torch.no_grad() if not requires_grad \
+            else nullcontext()
+
+    with encoder_get_context():
+        # x, pos = encoder_blk(imgs)
         B, nimgs = imgs.shape[:2]
         if max_bs is None or B * nimgs <= max_bs:
             # encode all images (concat them in the batch dimension for efficiency)
-            x, pos = encoder(imgs.reshape(B * nimgs, *imgs.shape[2:]), true_shape_view)
+            x, pos = encoder(imgs.view(B * nimgs, *imgs.shape[2:]), true_shape_view)
         else:
             # can also do it slice by slice in case all images don't fit at once
-            imgs_view = imgs.reshape(B * nimgs, *imgs.shape[2:])
+            imgs_view = imgs.view(B * nimgs, *imgs.shape[2:])
             x, pos = [], []
             for imgs_view_slice, true_shape_slice in zip(torch.split(imgs_view, max_bs), torch.split(true_shape_view, max_bs)):
                 xi, posi = encoder(imgs_view_slice, true_shape_slice)
@@ -582,53 +587,7 @@ def inference_encoder(encoder, imgs, true_shape_view, max_bs=None, requires_grad
                 pos.append(posi)
             x = torch.concatenate(x)
             pos = torch.concatenate(pos)
-        return x.reshape(B, nimgs, *x.shape[1:]), pos.reshape(B, nimgs, *pos.shape[1:])
-
-    if isinstance(requires_grad, list):
-        nimgs = imgs.shape[1]
-        ranges = groupby_consecutive(requires_grad)
-        xl, posl = [], []
-
-        def encoder_blk_partial(s, e):
-            xp, posp = encoder_blk(imgs[:, s:e])
-            xl.append(xp)
-            posl.append(posp)
-
-        start = 0
-        for s, e in ranges:
-            if start < s:
-                with torch.no_grad():
-                    encoder_blk_partial(start, s)
-            encoder_blk_partial(s, e + 1)
-            start = e + 1
-        if start < nimgs:
-            with torch.no_grad():
-                encoder_blk_partial(start, nimgs)
-
-        x = torch.concatenate(xl, dim=1)
-        pos = torch.concatenate(posl, dim=1)
-    else:
-        def encoder_get_context():
-            return torch.no_grad() if not requires_grad \
-                else nullcontext()
-
-        with encoder_get_context():
-            # x, pos = encoder_blk(imgs)
-            B, nimgs = imgs.shape[:2]
-            if max_bs is None or B * nimgs <= max_bs:
-                # encode all images (concat them in the batch dimension for efficiency)
-                x, pos = encoder(imgs.view(B * nimgs, *imgs.shape[2:]), true_shape_view)
-            else:
-                # can also do it slice by slice in case all images don't fit at once
-                imgs_view = imgs.view(B * nimgs, *imgs.shape[2:])
-                x, pos = [], []
-                for imgs_view_slice, true_shape_slice in zip(torch.split(imgs_view, max_bs), torch.split(true_shape_view, max_bs)):
-                    xi, posi = encoder(imgs_view_slice, true_shape_slice)
-                    x.append(xi)
-                    pos.append(posi)
-                x = torch.concatenate(x)
-                pos = torch.concatenate(pos)
-            return x.view(B, nimgs, *x.shape[1:]), pos.view(B, nimgs, *pos.shape[1:])
+        return x.view(B, nimgs, *x.shape[1:]), pos.view(B, nimgs, *pos.shape[1:])
     return x, pos
 
 

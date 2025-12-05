@@ -26,9 +26,9 @@ import must3r.engine.io as checkpoints
 
 import must3r.tools.path_to_dust3r  # noqa
 import dust3r.utils.path_to_croco  # noqa: F401
-from utils.misc import NativeScalerWithGradNormCount as NativeScaler  # noqa
-import utils.misc as dist
-from utils.misc import MetricLogger, SmoothedValue
+from croco.utils.misc import NativeScalerWithGradNormCount as NativeScaler  # noqa
+import croco.utils.misc as dist
+from croco.utils.misc import MetricLogger, SmoothedValue
 
 
 def get_args_parser():
@@ -109,7 +109,6 @@ def get_args_parser():
                         help='frequence (number of iterations) to print infos while training')
 
     # output dir
-    parser.add_argument("--dbg", type=str, nargs='+', default=(), help="Debug commands")
     parser.add_argument('--output_dir', default='./output/', type=str, help="path where to save the output")
     return parser
 
@@ -135,7 +134,7 @@ def select_batch(device, args, rng, memory_num_views, progress, imgs, true_shape
     to_render = None
 
     if args.memory_num_views < nimgs:
-        # in this scenario, we will run update part of the memory in no_grad
+        # in this scenario, we will update part of the memory in no_grad
         # we allow more and more images to be no_grad in a curriculum way
         memory_num_views = 1
         max_views = math.ceil(args.memory_num_views + progress * (nimgs - args.memory_num_views))
@@ -383,14 +382,6 @@ def save_final_model(args, epoch, encoder, decoder):
     dist.save_on_master(to_save, checkpoint_path)
 
 
-def get_dtype(args):
-    if args.amp:
-        dtype = torch.bfloat16 if args.amp == 'bf16' else torch.float16
-    else:
-        dtype = torch.float32
-    return dtype
-
-
 def train_one_epoch(encoder: torch.nn.Module, decoder: torch.nn.Module,
                     criterion: torch.nn.Module,
                     data_loader: Sized, optimizer: torch.optim.Optimizer,
@@ -440,7 +431,7 @@ def train_one_epoch(encoder: torch.nn.Module, decoder: torch.nn.Module,
         true_shape = [b['true_shape'] for b in batch]
         true_shape = torch.stack(true_shape, dim=1).to(device)  # B, nimgs, 3, H, W
 
-        if args.ignore_dataloader_memory_num_views:  # dataloader v1 like
+        if args.ignore_dataloader_memory_num_views:  # similar to the CVPR implementation: extra images may not overlap with the keyframes
             memory_num_views = rng.choice(args.memory_num_views - args.min_memory_num_views + 1) \
                 + args.min_memory_num_views
         else:
